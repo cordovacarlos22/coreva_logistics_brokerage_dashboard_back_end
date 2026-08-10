@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: coreva-server
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: ALLOWED_ORIGIN
+        value: https://dashboard.corevalogisticsbrokerage.com
+      # Set these two in the Render dashboard during setup (Project Settings
+      # -> API in Supabase). Use the SECRET key (sb_secret_... / legacy
+      # service_role JWT), not the publishable/anon one -- this client
+      # bypasses RLS.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Not used by any route yet (OCR isn't built) -- leave blank for now.
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        sync: false
