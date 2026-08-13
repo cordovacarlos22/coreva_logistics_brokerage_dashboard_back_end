@@ -6,7 +6,7 @@ import request from 'supertest';
 vi.mock('../src/config/env.js', () => ({
   env: { port: 4000, allowedOrigin: '*' },
   isSupabaseConfigured: false,
-  isVisionConfigured: false,
+  isTextractConfigured: false,
 }));
 
 const { createApp } = await import('../src/app.js');

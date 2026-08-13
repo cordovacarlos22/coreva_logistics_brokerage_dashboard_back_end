@@ -1,35 +1,73 @@
+import { AnalyzeDocumentCommand } from '@aws-sdk/client-textract';
 import { supabaseAdmin } from '../../config/supabaseAdmin.js';
-import { visionClient } from '../../config/visionClient.js';
+import { textractClient } from '../../config/textractClient.js';
 import { AppError } from '../../middleware/errorHandler.js';
 
 // Fields required for bol_verification_status to auto-flip to 'ai_verified'.
 // Deliberately excludes seal # -- the seal isn't placed until the driver
 // app's "Seal the Trailer" step, so it's never legible in a BOL photo taken
 // this early in the pickup flow. Deliberately excludes commodity too --
-// it's the least reliably labeled field on a real BOL, so requiring it would
-// make 'pending' (needing dispatch review) the common case instead of the
-// exception.
+// it's the least reliably labeled field on a real BOL, so requiring it
+// would make 'pending' (needing dispatch review) the common case instead
+// of the exception.
 const REQUIRED_FIELDS = ['trailerNumber', 'mfo', 'poNumber'];
 
-// BOLs aren't standardized -- these patterns match common label variants
-// (Trailer #, TRAILER NO, MFO#, M.F.O., P.O. #, PO Number, Weight, WT) with
-// the value on the same line. Real-world documents will need this tuned
-// over time; that's expected, not a sign something's broken.
-const FIELD_PATTERNS = {
-  trailerNumber: /trailer\s*(?:no\.?|#|number)?\s*:?\s*([A-Z0-9-]{3,})/i,
-  mfo: /m\.?f\.?o\.?\s*#?\s*:?\s*([A-Z0-9-]{3,})/i,
-  poNumber: /p\.?\s?o\.?\s*(?:#|number)?\s*:?\s*([A-Z0-9-]{3,})/i,
-  weightLbs: /weight\s*:?\s*([\d,]{3,})\s*(?:lbs?)?/i,
-  commodity: /commodity\s*:?\s*([A-Za-z][A-Za-z ]{2,40})/i,
+// Matched against Textract's extracted form *key* text (case-insensitive,
+// substring match) -- BOLs aren't standardized, so these are label variants
+// (Trailer #, TRAILER NO, MFO#, M.F.O., P.O. #, PO Number, Weight, WT)
+// rather than exact strings. Real-world documents will need this tuned over
+// time; that's expected, not a sign something's broken.
+const FIELD_KEY_PATTERNS = {
+  trailerNumber: /trailer/,
+  mfo: /m\.?\s?f\.?\s?o\.?/,
+  poNumber: /p\.?\s?o\.?\s*(#|no|number)?/,
+  weightLbs: /weight|^wt/,
+  commodity: /commodity/,
 };
 
-function parseBolText(rawText) {
+// Textract's Block model: every detected word/line/form-field is a Block
+// linked to others via `Relationships`. A KEY_VALUE_SET block with
+// EntityTypes including 'KEY' has a `Relationships` entry of Type 'VALUE'
+// pointing at its paired value block, and both key/value blocks have Type
+// 'CHILD' relationships down to the WORD blocks that make up their text.
+// See https://docs.aws.amazon.com/textract/latest/dg/how-it-works-kvp.html
+function buildKeyValueMap(blocks) {
+  const blockMap = new Map(blocks.map((block) => [block.Id, block]));
+
+  function textFor(block) {
+    if (!block?.Relationships) return '';
+    const childIds = block.Relationships.filter((r) => r.Type === 'CHILD').flatMap(
+      (r) => r.Ids ?? []
+    );
+    return childIds
+      .map((id) => blockMap.get(id))
+      .filter((child) => child?.BlockType === 'WORD')
+      .map((child) => child.Text)
+      .join(' ');
+  }
+
+  const keyBlocks = blocks.filter(
+    (block) => block.BlockType === 'KEY_VALUE_SET' && block.EntityTypes?.includes('KEY')
+  );
+
+  const map = {};
+  for (const keyBlock of keyBlocks) {
+    const valueId = keyBlock.Relationships?.find((r) => r.Type === 'VALUE')?.Ids?.[0];
+    const valueBlock = valueId ? blockMap.get(valueId) : null;
+    const key = textFor(keyBlock).trim().toLowerCase();
+    const value = textFor(valueBlock).trim();
+    if (key) map[key] = value;
+  }
+  return map;
+}
+
+function parseBolFields(keyValueMap) {
   const fields = {};
-  for (const [key, pattern] of Object.entries(FIELD_PATTERNS)) {
-    const match = rawText.match(pattern);
-    if (!match) continue;
-    const value = match[1].trim();
-    fields[key] = key === 'weightLbs' ? Number(value.replace(/,/g, '')) : value;
+  for (const [field, pattern] of Object.entries(FIELD_KEY_PATTERNS)) {
+    const matchedKey = Object.keys(keyValueMap).find((key) => pattern.test(key));
+    const value = matchedKey ? keyValueMap[matchedKey] : null;
+    if (!value) continue;
+    fields[field] = field === 'weightLbs' ? Number(value.replace(/[^\d.]/g, '')) : value;
   }
   return fields;
 }
@@ -38,7 +76,7 @@ function parseBolText(rawText) {
 // (client already uploaded it there before calling this route).
 export async function extractBolFields(storagePath) {
   if (!supabaseAdmin) throw new AppError('Supabase is not configured', 503);
-  if (!visionClient) throw new AppError('OCR is not configured', 503);
+  if (!textractClient) throw new AppError('OCR is not configured', 503);
 
   const { data: file, error: downloadError } = await supabaseAdmin.storage
     .from('bol-photos')
@@ -46,13 +84,24 @@ export async function extractBolFields(storagePath) {
   if (downloadError) throw new AppError(`bol-photos download: ${downloadError.message}`, 500);
 
   const imageBuffer = Buffer.from(await file.arrayBuffer());
-  const [result] = await visionClient.documentTextDetection({ image: { content: imageBuffer } });
-  const rawText = result.fullTextAnnotation?.text || '';
+  const response = await textractClient.send(
+    new AnalyzeDocumentCommand({
+      Document: { Bytes: imageBuffer },
+      FeatureTypes: ['FORMS'],
+    })
+  );
 
-  const fields = parseBolText(rawText);
+  const blocks = response.Blocks ?? [];
+  const keyValueMap = buildKeyValueMap(blocks);
+  const fields = parseBolFields(keyValueMap);
+  const rawText = blocks
+    .filter((block) => block.BlockType === 'LINE')
+    .map((block) => block.Text)
+    .join('\n');
+
   const verificationStatus = REQUIRED_FIELDS.every((key) => fields[key] != null)
     ? 'ai_verified'
     : 'pending';
 
-  return { fields, verificationStatus, raw: { text: rawText } };
+  return { fields, verificationStatus, raw: { text: rawText, formFields: keyValueMap } };
 }

@@ -2,13 +2,13 @@
 
 Express modular monolith API for the Coreva Logistics Brokerage dashboard. Split out from the [main dashboard repo](https://github.com/cordovacarlos22/coreva_logistics_brokerage_dashboard) so it can be deployed independently (Render). See that repo's `CLAUDE.md` for full product context.
 
-Most of the app's data access goes straight from the browser to Supabase via Row-Level Security — this API is intentionally minimal, used for things that shouldn't run in the browser (e.g. eventually, BOL photo OCR via Google Cloud Vision).
+Most of the app's data access goes straight from the browser to Supabase via Row-Level Security — this API is intentionally minimal, used for things that shouldn't run in the browser (BOL photo OCR via Amazon Textract, `POST /api/ocr/bol`).
 
 ## Getting started
 
 ```bash
 npm install
-cp .env.example .env   # fill in Supabase + Google Vision creds
+cp .env.example .env   # fill in Supabase + AWS Textract creds
 npm run dev
 ```
 

@@ -17,9 +17,11 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
-      # Paste the full contents of a Google Cloud service-account JSON key
-      # here (Vision API OCR, /api/ocr/bol) -- the whole file as one string,
-      # not a path. Render has no persistent disk for a file-path var to
-      # point at.
-      - key: GOOGLE_CLOUD_CREDENTIALS_JSON
+      # IAM user/role credentials for Amazon Textract OCR (/api/ocr/bol).
+      # The IAM policy only needs textract:AnalyzeDocument.
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
         sync: false

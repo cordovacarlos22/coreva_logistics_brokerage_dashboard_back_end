@@ -4,13 +4,13 @@ import request from 'supertest';
 vi.mock('../src/config/env.js', () => ({
   env: { port: 4000, allowedOrigin: '*' },
   isSupabaseConfigured: false,
-  isVisionConfigured: false,
+  isTextractConfigured: false,
 }));
 
 const { createApp } = await import('../src/app.js');
 
 describe('POST /api/ocr/bol', () => {
-  it('rejects a request with no bearer token before touching Supabase or Vision', async () => {
+  it('rejects a request with no bearer token before touching Supabase or Textract', async () => {
     const app = createApp();
     const res = await request(app)
       .post('/api/ocr/bol')
