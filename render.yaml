@@ -17,6 +17,9 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
-      # Not used by any route yet (OCR isn't built) -- leave blank for now.
-      - key: GOOGLE_APPLICATION_CREDENTIALS
+      # Paste the full contents of a Google Cloud service-account JSON key
+      # here (Vision API OCR, /api/ocr/bol) -- the whole file as one string,
+      # not a path. Render has no persistent disk for a file-path var to
+      # point at.
+      - key: GOOGLE_CLOUD_CREDENTIALS_JSON
         sync: false
