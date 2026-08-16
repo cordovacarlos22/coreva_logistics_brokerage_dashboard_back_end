@@ -25,3 +25,9 @@ services:
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
         sync: false
+      # Shared secret for the Supabase Database Webhook that hits
+      # /api/notifications/load-message-webhook -- generate any random
+      # string and set the same value as that webhook's X-Webhook-Secret
+      # header in the Supabase dashboard.
+      - key: SUPABASE_WEBHOOK_SECRET
+        sync: false

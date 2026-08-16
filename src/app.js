@@ -4,6 +4,7 @@ import morgan from 'morgan';
 import { env } from './config/env.js';
 import { healthRouter } from './modules/health/health.routes.js';
 import { ocrRouter } from './modules/ocr/ocr.routes.js';
+import { notificationsRouter } from './modules/notifications/notifications.routes.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 export function createApp() {
@@ -15,6 +16,7 @@ export function createApp() {
 
   app.use('/api/health', healthRouter);
   app.use('/api/ocr', ocrRouter);
+  app.use('/api/notifications', notificationsRouter);
 
   app.use((req, res) => {
     res.status(404).json({ error: 'Not found' });
