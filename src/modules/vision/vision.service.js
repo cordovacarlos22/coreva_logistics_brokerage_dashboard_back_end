@@ -25,11 +25,18 @@ const REFERENCE_SAMPLE_SIZE = 5;
 
 // Also normalizes everything to JPEG regardless of the source format, so
 // there's no need to track/pass through each file's original media type.
-async function resizeForVision(buffer) {
-  return sharp(buffer)
+async function resizeForVision(buffer, label) {
+  const resized = await sharp(buffer)
     .resize({ width: MAX_DIMENSION, height: MAX_DIMENSION, fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 85 })
     .toBuffer();
+  // Temporary diagnostic -- the "exceed max allowed size" error kept
+  // recurring even after this resize was added, so log the actual output
+  // dimensions to confirm (or rule out) that sharp is doing what's
+  // expected here, rather than guessing again.
+  const { width, height } = await sharp(resized).metadata();
+  console.warn(`[vision] resized ${label}: ${width}x${height}, ${resized.length} bytes`);
+  return resized;
 }
 
 function toImageBlock(buffer) {
@@ -77,7 +84,7 @@ async function fetchReferencePool() {
     }
     try {
       const buffer = Buffer.from(await data.arrayBuffer());
-      images.push(toImageBlock(await resizeForVision(buffer)));
+      images.push(toImageBlock(await resizeForVision(buffer, `reference:${file.name}`)));
     } catch (err) {
       console.warn(`[vision] reference photo resize failed (${file.name}):`, err.message);
     }
@@ -104,10 +111,11 @@ export async function checkLoadSecuredCompliance(storagePath) {
   if (downloadError) throw new AppError(`load-photos download: ${downloadError.message}`, 500);
 
   const rawBuffer = Buffer.from(await file.arrayBuffer());
-  const resizedBuffer = await resizeForVision(rawBuffer);
+  const resizedBuffer = await resizeForVision(rawBuffer, 'driver photo');
 
   const referencePool = await fetchReferencePool();
   const referenceImages = sampleReferenceImages(referencePool, REFERENCE_SAMPLE_SIZE);
+  console.warn(`[vision] sending ${referenceImages.length} reference image(s) + 1 driver photo to Anthropic`);
 
   const content = [];
   if (referenceImages.length > 0) {
@@ -129,6 +137,11 @@ export async function checkLoadSecuredCompliance(storagePath) {
       messages: [{ role: 'user', content }],
     });
   } catch (err) {
+    // Temporary diagnostic -- err.message alone hasn't been enough to
+    // pin down why the "exceed max allowed size" error keeps recurring
+    // even with every image resized under the limit. The Anthropic SDK's
+    // error usually carries more structured detail than .message alone.
+    console.warn('[vision] Anthropic request failed:', JSON.stringify(err.error ?? err, null, 2));
     throw new AppError(`Vision check request failed: ${err.message}`, 502);
   }
 
