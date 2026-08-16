@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireWebhookSecret } from '../../middleware/requireWebhookSecret.js';
 import { AppError } from '../../middleware/errorHandler.js';
-import { sendPushForLoadMessage } from './notifications.service.js';
+import { sendPushForLoadMessage, sendPushForDriverMessage } from './notifications.service.js';
 
 export const notificationsRouter = Router();
 
@@ -15,6 +15,19 @@ notificationsRouter.post('/load-message-webhook', requireWebhookSecret, async (r
     if (!record) throw new AppError('Missing record in webhook payload', 400);
 
     await sendPushForLoadMessage(record);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Same pattern, configured on driver_messages INSERT instead.
+notificationsRouter.post('/driver-message-webhook', requireWebhookSecret, async (req, res, next) => {
+  try {
+    const record = req.body?.record;
+    if (!record) throw new AppError('Missing record in webhook payload', 400);
+
+    await sendPushForDriverMessage(record);
     res.json({ ok: true });
   } catch (err) {
     next(err);

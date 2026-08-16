@@ -36,3 +36,30 @@ export async function sendPushForLoadMessage(record) {
     }),
   });
 }
+
+// Fires for every driver_messages insert -- simpler than the load-message
+// version since driver_id lives directly on the row, no loads lookup
+// needed. data.dispatchMessage (not data.loadId) is what lets the driver
+// app's notification-tap handler tell the two apart.
+export async function sendPushForDriverMessage(record) {
+  if (!supabaseAdmin) throw new AppError('Supabase is not configured', 503);
+  if (record.sender_id === record.driver_id) return;
+
+  const { data: driverProfile, error: profileError } = await supabaseAdmin
+    .from('profiles')
+    .select('expo_push_token')
+    .eq('id', record.driver_id)
+    .single();
+  if (profileError || !driverProfile?.expo_push_token) return;
+
+  await fetch(EXPO_PUSH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      to: driverProfile.expo_push_token,
+      title: 'New message from Dispatch',
+      body: record.body,
+      data: { dispatchMessage: true },
+    }),
+  });
+}

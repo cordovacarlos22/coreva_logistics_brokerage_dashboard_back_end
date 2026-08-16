@@ -30,3 +30,14 @@ describe('POST /api/notifications/load-message-webhook', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('POST /api/notifications/driver-message-webhook', () => {
+  it('rejects a request with no webhook secret header', async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post('/api/notifications/driver-message-webhook')
+      .send({ record: { id: 'x' } });
+
+    expect(res.status).toBe(401);
+  });
+});
