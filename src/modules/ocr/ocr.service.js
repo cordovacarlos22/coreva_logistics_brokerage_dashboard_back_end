@@ -23,6 +23,12 @@ const FIELD_KEY_PATTERNS = {
   poNumber: /p\.?\s?o\.?\s*(#|no|number)?/,
   weightLbs: /weight|^wt/,
   commodity: /commodity/,
+  // Only used by the Scan New Shipment "photo first" flow to pre-fill
+  // origin/destination before a load exists -- the regular Pickup BOL step
+  // (POST /bol) doesn't map these to a `loads` column since that load
+  // already has its addresses by the time the BOL is photographed there.
+  shipFrom: /ship\s*from|shipper/,
+  shipTo: /ship\s*to|consignee/,
 };
 
 // Textract's Block model: every detected word/line/form-field is a Block
@@ -99,9 +105,42 @@ export async function extractBolFields(storagePath) {
     .map((block) => block.Text)
     .join('\n');
 
-  const verificationStatus = REQUIRED_FIELDS.every((key) => fields[key] != null)
-    ? 'ai_verified'
-    : 'pending';
+  const verificationStatus = computeVerificationStatus(fields);
 
   return { fields, verificationStatus, raw: { text: rawText, formFields: keyValueMap } };
+}
+
+export function computeVerificationStatus(fields) {
+  return REQUIRED_FIELDS.every((key) => fields[key] != null) ? 'ai_verified' : 'pending';
+}
+
+const FIELD_TO_COLUMN = {
+  trailerNumber: 'bol_trailer_number',
+  mfo: 'bol_mfo',
+  poNumber: 'bol_po_number',
+  weightLbs: 'weight_lbs',
+  commodity: 'commodity',
+};
+
+// Shared by POST /bol (extracts then applies in one call) and POST
+// /bol/attach (applies fields already extracted by an earlier POST
+// /bol/preview call, so a "photo first" flow never runs Textract twice for
+// what's functionally one BOL photo).
+export async function applyBolFields({ loadId, checklistId, storagePath, fields, verificationStatus, raw }) {
+  const loadUpdate = { bol_verification_status: verificationStatus };
+  for (const [field, column] of Object.entries(FIELD_TO_COLUMN)) {
+    if (fields[field] != null) loadUpdate[column] = fields[field];
+  }
+
+  const { error: updateError } = await supabaseAdmin.from('loads').update(loadUpdate).eq('id', loadId);
+  if (updateError) throw new AppError(`loads update: ${updateError.message}`, 500);
+
+  const { data: photo, error: photoError } = await supabaseAdmin
+    .from('checklist_photos')
+    .insert({ checklist_id: checklistId, type: 'bol', storage_path: storagePath, ocr_raw: raw })
+    .select('*')
+    .single();
+  if (photoError) throw new AppError(`checklist_photos insert: ${photoError.message}`, 500);
+
+  return { photo };
 }
