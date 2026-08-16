@@ -18,7 +18,10 @@ const REQUIRED_FIELDS = ['trailerNumber', 'mfo', 'poNumber'];
 // rather than exact strings. Real-world documents will need this tuned over
 // time; that's expected, not a sign something's broken.
 const FIELD_KEY_PATTERNS = {
-  trailerNumber: /trailer/,
+  // International Paper's actual BOL labels this "VEHICLE ID NO.", not
+  // "Trailer #" -- confirmed against a real IP BOL photo. Matches both, in
+  // case another shipper's paperwork does use "Trailer".
+  trailerNumber: /trailer|vehicle\s*id/,
   mfo: /m\.?\s?f\.?\s?o\.?/,
   poNumber: /p\.?\s?o\.?\s*(#|no|number)?/,
   weightLbs: /weight|^wt/,
@@ -29,6 +32,12 @@ const FIELD_KEY_PATTERNS = {
   // already has its addresses by the time the BOL is photographed there.
   shipFrom: /ship\s*from|shipper/,
   shipTo: /ship\s*to|consignee/,
+  // Also preview-only -- the driver-facing Coreva "load number" pre-fills
+  // from IP's own "Shipment Plan ID" (e.g. "15095 / 5"), confirmed against
+  // a real IP BOL, since that's the one field on the paperwork that
+  // actually identifies the shipment (Plant Code / Customer's No. are
+  // IP-internal, not useful here).
+  shipmentPlanId: /shipment\s*plan\s*id/,
 };
 
 // Textract's Block model: every detected word/line/form-field is a Block
