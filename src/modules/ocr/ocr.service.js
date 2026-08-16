@@ -4,12 +4,11 @@ import { textractClient } from '../../config/textractClient.js';
 import { AppError } from '../../middleware/errorHandler.js';
 
 // Fields required for bol_verification_status to auto-flip to 'ai_verified'.
-// Deliberately excludes seal # -- the seal isn't placed until the driver
-// app's "Seal the Trailer" step, so it's never legible in a BOL photo taken
-// this early in the pickup flow. Deliberately excludes commodity too --
-// it's the least reliably labeled field on a real BOL, so requiring it
-// would make 'pending' (needing dispatch review) the common case instead
-// of the exception.
+// Deliberately excludes seal # -- confirmed against a real IP BOL that it
+// IS sometimes pre-printed (in Shipping Comments, as IP's *expected* seal),
+// but not always ("if any"), so requiring it would make 'pending' the
+// common case. Deliberately excludes commodity too -- it's the least
+// reliably labeled field on a real BOL, same reasoning.
 const REQUIRED_FIELDS = ['trailerNumber', 'mfo', 'poNumber'];
 
 // Matched against Textract's extracted form *key* text (case-insensitive,
@@ -26,11 +25,11 @@ const FIELD_KEY_PATTERNS = {
   poNumber: /p\.?\s?o\.?\s*(#|no|number)?/,
   weightLbs: /weight|^wt/,
   commodity: /commodity/,
-  // Only used by the Scan New Shipment "photo first" flow to pre-fill
-  // origin/destination before a load exists -- the regular Pickup BOL step
-  // (POST /bol) doesn't map these to a `loads` column since that load
-  // already has its addresses by the time the BOL is photographed there.
-  shipFrom: /ship\s*from|shipper/,
+  // Preview-only -- pre-fills destination before a load exists (Scan New
+  // Shipment). No shipFrom counterpart: on a real IP BOL the pickup
+  // location is always IP's own plant printed in the static letterhead,
+  // not a distinct per-shipment field, so origin comes from the driver's
+  // GPS location instead (see scan-new-shipment.js).
   shipTo: /ship\s*to|consignee/,
   // Also preview-only -- the driver-facing Coreva "load number" pre-fills
   // from IP's own "Shipment Plan ID" (e.g. "15095 / 5"), confirmed against
@@ -38,6 +37,12 @@ const FIELD_KEY_PATTERNS = {
   // actually identifies the shipment (Plant Code / Customer's No. are
   // IP-internal, not useful here).
   shipmentPlanId: /shipment\s*plan\s*id/,
+  // Raw capture only -- see parseBolFields below, which pulls sealNumber
+  // and appointmentAt back out of this and deletes it. Unlike the other
+  // fields, IP doesn't give this its own labeled box: a dock appointment
+  // date/time and (once assigned) an expected seal number are packed into
+  // one free-text "Shipping Comments" block.
+  shippingComments: /shipping\s*comments/,
 };
 
 // Textract's Block model: every detected word/line/form-field is a Block
@@ -84,6 +89,33 @@ function parseBolFields(keyValueMap) {
     if (!value) continue;
     fields[field] = field === 'weightLbs' ? Number(value.replace(/[^\d.]/g, '')) : value;
   }
+
+  // The "SHIP TO" box on a real IP BOL also contains a standing legal
+  // disclaimer ("* To be filled in only when Shipper desires and
+  // governing tariffs provide for delivery there at.") in the same
+  // region Textract reads as this field's value -- strip it so only the
+  // customer name/address remains. Addresses don't otherwise contain
+  // parenthetical asides, so stripping any parenthetical is a safe,
+  // OCR-noise-tolerant way to do this (Textract's own read of the
+  // disclaimer's exact wording can vary/misread slightly).
+  if (fields.shipTo) {
+    fields.shipTo = fields.shipTo.replace(/\([^)]*\)?/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  // Shipping Comments isn't a clean key: value pair like the rest -- sub-
+  // parse the two pieces Carlos actually wants out of it (dock appointment,
+  // expected seal #) and drop the raw blob rather than surfacing it as one
+  // opaque field.
+  if (fields.shippingComments) {
+    const sealMatch = fields.shippingComments.match(/seal\s*#?\s*(\d{3,})/i);
+    if (sealMatch) fields.sealNumber = sealMatch[1];
+
+    const appointmentMatch = fields.shippingComments.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s+(\d{1,2}:\d{2})/);
+    if (appointmentMatch) fields.appointmentAt = `${appointmentMatch[1]} ${appointmentMatch[2]}`;
+
+    delete fields.shippingComments;
+  }
+
   return fields;
 }
 
@@ -127,6 +159,12 @@ const FIELD_TO_COLUMN = {
   trailerNumber: 'bol_trailer_number',
   mfo: 'bol_mfo',
   poNumber: 'bol_po_number',
+  // Reference only (Carlos's call) -- this is IP's *expected* seal, shown
+  // to the driver alongside the seal number they actually type in at the
+  // Seal the Trailer step, never auto-filled into it. `bol_seal_number`
+  // already existed in the schema and was already displayed on Load
+  // Details -- nothing had ever written to it until now.
+  sealNumber: 'bol_seal_number',
   weightLbs: 'weight_lbs',
   commodity: 'commodity',
 };
