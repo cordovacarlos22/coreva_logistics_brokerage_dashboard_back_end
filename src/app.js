@@ -4,6 +4,7 @@ import morgan from 'morgan';
 import { env } from './config/env.js';
 import { healthRouter } from './modules/health/health.routes.js';
 import { ocrRouter } from './modules/ocr/ocr.routes.js';
+import { visionRouter } from './modules/vision/vision.routes.js';
 import { notificationsRouter } from './modules/notifications/notifications.routes.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -16,6 +17,7 @@ export function createApp() {
 
   app.use('/api/health', healthRouter);
   app.use('/api/ocr', ocrRouter);
+  app.use('/api/vision', visionRouter);
   app.use('/api/notifications', notificationsRouter);
 
   app.use((req, res) => {

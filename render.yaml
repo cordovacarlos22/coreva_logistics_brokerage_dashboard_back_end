@@ -31,3 +31,7 @@ services:
       # header in the Supabase dashboard.
       - key: SUPABASE_WEBHOOK_SECRET
         sync: false
+      # From console.anthropic.com -- /api/vision/load-secured's AI
+      # compliance check on the load-secured photo.
+      - key: ANTHROPIC_API_KEY
+        sync: false

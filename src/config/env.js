@@ -7,6 +7,7 @@ export const env = {
   awsRegion: process.env.AWS_REGION || null,
   awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID || null,
   awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || null,
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || null,
   allowedOrigin: process.env.ALLOWED_ORIGIN || '*',
   // Shared secret the Supabase Database Webhook (load_messages insert ->
   // /api/notifications/load-message-webhook) sends back on every call, so
@@ -23,3 +24,5 @@ export const isSupabaseConfigured = Boolean(
 export const isTextractConfigured = Boolean(
   env.awsRegion && env.awsAccessKeyId && env.awsSecretAccessKey
 );
+
+export const isAnthropicConfigured = Boolean(env.anthropicApiKey);

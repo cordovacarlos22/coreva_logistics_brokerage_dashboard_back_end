@@ -5,6 +5,7 @@ vi.mock('../src/config/env.js', () => ({
   env: { port: 4000, allowedOrigin: '*', webhookSecret: 'test-secret' },
   isSupabaseConfigured: false,
   isTextractConfigured: false,
+  isAnthropicConfigured: false,
 }));
 
 const { createApp } = await import('../src/app.js');
