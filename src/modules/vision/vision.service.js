@@ -22,6 +22,17 @@ Respond with ONLY a JSON object, no other text: {"compliant": true or false, "re
 
 const REFERENCE_BUCKET = 'compliance-reference-photos';
 const REFERENCE_SAMPLE_SIZE = 5;
+// Temporarily off: the reference-photo pool kept causing the same
+// "exceed max allowed size" error and a multi-minute rebuild on every
+// check even after three separate fixes (resize, sequential processing,
+// diagnostics), with no code-level bug found by re-reading the resize
+// logic. Restoring the core hard-gate check (driver's photo + text
+// prompt only, which worked before reference photos existed) takes
+// priority over the accuracy improvement while that's debugged
+// separately. fetchReferencePool/sampleReferenceImages are untouched
+// below so re-enabling this is a one-line flip once the root cause is
+// found.
+const REFERENCE_PHOTOS_ENABLED = false;
 
 // Also normalizes everything to JPEG regardless of the source format, so
 // there's no need to track/pass through each file's original media type.
@@ -113,7 +124,7 @@ export async function checkLoadSecuredCompliance(storagePath) {
   const rawBuffer = Buffer.from(await file.arrayBuffer());
   const resizedBuffer = await resizeForVision(rawBuffer, 'driver photo');
 
-  const referencePool = await fetchReferencePool();
+  const referencePool = REFERENCE_PHOTOS_ENABLED ? await fetchReferencePool() : [];
   const referenceImages = sampleReferenceImages(referencePool, REFERENCE_SAMPLE_SIZE);
   console.warn(`[vision] sending ${referenceImages.length} reference image(s) + 1 driver photo to Anthropic`);
 
