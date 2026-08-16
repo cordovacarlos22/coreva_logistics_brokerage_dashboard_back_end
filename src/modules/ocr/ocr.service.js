@@ -140,6 +140,12 @@ export async function extractBolFields(storagePath) {
 
   const blocks = response.Blocks ?? [];
   const keyValueMap = buildKeyValueMap(blocks);
+  // Temporary diagnostic -- regex tuning against photos of real BOLs has
+  // repeatedly not held up on the next live scan (wrong fields matched,
+  // garbled values). Rather than guess again, log Textract's own raw
+  // key/value read so a failing scan can be diagnosed from what it
+  // actually saw, not from a guess about what it probably saw.
+  console.warn(`[ocr] ${storagePath} keyValueMap:`, JSON.stringify(keyValueMap, null, 2));
   const fields = parseBolFields(keyValueMap);
   const rawText = blocks
     .filter((block) => block.BlockType === 'LINE')
