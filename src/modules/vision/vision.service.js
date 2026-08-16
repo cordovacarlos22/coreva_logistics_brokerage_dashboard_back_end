@@ -11,6 +11,44 @@ const PROMPT = `You are reviewing a photo of a load inside a semi trailer, taken
 
 Respond with ONLY a JSON object, no other text: {"compliant": true or false, "reason": "one short sentence explaining what you see"}`;
 
+const REFERENCE_BUCKET = 'compliance-reference-photos';
+const MAX_REFERENCE_IMAGES = 3;
+
+// Real example photos of a correctly strapped load, uploaded by hand to a
+// private bucket (Carlos curates these directly in the Supabase
+// dashboard -- no code change needed to add/replace them). Purely
+// optional: if the bucket doesn't exist yet or is empty, the check still
+// runs on the text prompt alone, same as before this existed. Cached for
+// the life of this process -- these change rarely, and a plain restart
+// (Render redeploys/cold-starts regularly anyway) picks up any update.
+let referenceImagesCache = null;
+
+async function fetchReferenceImages() {
+  if (referenceImagesCache) return referenceImagesCache;
+
+  const { data: files, error: listError } = await supabaseAdmin.storage.from(REFERENCE_BUCKET).list();
+  if (listError || !files?.length) {
+    if (listError) console.warn('[vision] reference photos list failed:', listError.message);
+    referenceImagesCache = [];
+    return referenceImagesCache;
+  }
+
+  const images = [];
+  for (const file of files.slice(0, MAX_REFERENCE_IMAGES)) {
+    const { data, error } = await supabaseAdmin.storage.from(REFERENCE_BUCKET).download(file.name);
+    if (error) {
+      console.warn(`[vision] reference photo download failed (${file.name}):`, error.message);
+      continue;
+    }
+    const buffer = Buffer.from(await data.arrayBuffer());
+    const mediaType = SUPPORTED_MEDIA_TYPES.has(data.type) ? data.type : 'image/jpeg';
+    images.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: buffer.toString('base64') } });
+  }
+
+  referenceImagesCache = images;
+  return images;
+}
+
 // storagePath is a path within the `load-photos` Supabase Storage bucket
 // (client already uploaded it there before calling this route).
 export async function checkLoadSecuredCompliance(storagePath) {
@@ -24,19 +62,27 @@ export async function checkLoadSecuredCompliance(storagePath) {
 
   const imageBuffer = Buffer.from(await file.arrayBuffer());
   const mediaType = SUPPORTED_MEDIA_TYPES.has(file.type) ? file.type : 'image/jpeg';
+  const referenceImages = await fetchReferenceImages();
+
+  const content = [];
+  if (referenceImages.length > 0) {
+    content.push({
+      type: 'text',
+      text: `Here ${referenceImages.length === 1 ? 'is an example' : 'are examples'} of a load that IS properly secured -- straps/wrap visibly crossing over the load:`,
+    });
+    content.push(...referenceImages);
+  }
+  content.push({ type: 'text', text: 'Now evaluate this photo:' });
+  content.push({
+    type: 'image',
+    source: { type: 'base64', media_type: mediaType, data: imageBuffer.toString('base64') },
+  });
+  content.push({ type: 'text', text: PROMPT });
 
   const response = await anthropicClient.messages.create({
     model: MODEL,
     max_tokens: 200,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBuffer.toString('base64') } },
-          { type: 'text', text: PROMPT },
-        ],
-      },
-    ],
+    messages: [{ role: 'user', content }],
   });
 
   const text = response.content.find((block) => block.type === 'text')?.text ?? '';
