@@ -12,29 +12,34 @@ const PROMPT = `You are reviewing a photo of a load inside a semi trailer, taken
 Respond with ONLY a JSON object, no other text: {"compliant": true or false, "reason": "one short sentence explaining what you see"}`;
 
 const REFERENCE_BUCKET = 'compliance-reference-photos';
-const MAX_REFERENCE_IMAGES = 3;
+const REFERENCE_SAMPLE_SIZE = 5;
 
 // Real example photos of a correctly strapped load, uploaded by hand to a
 // private bucket (Carlos curates these directly in the Supabase
 // dashboard -- no code change needed to add/replace them). Purely
 // optional: if the bucket doesn't exist yet or is empty, the check still
-// runs on the text prompt alone, same as before this existed. Cached for
-// the life of this process -- these change rarely, and a plain restart
-// (Render redeploys/cold-starts regularly anyway) picks up any update.
-let referenceImagesCache = null;
+// runs on the text prompt alone, same as before this existed.
+//
+// The whole pool (Carlos uploaded 52) is downloaded once and cached for
+// the life of this process -- sending all 52 on every single check would
+// make each one slow and expensive for no real accuracy benefit past a
+// handful of examples. Instead, a fresh random REFERENCE_SAMPLE_SIZE is
+// drawn from the cached pool on every check, so requests see varied
+// examples without re-downloading the whole pool each time.
+let referencePoolCache = null;
 
-async function fetchReferenceImages() {
-  if (referenceImagesCache) return referenceImagesCache;
+async function fetchReferencePool() {
+  if (referencePoolCache) return referencePoolCache;
 
   const { data: files, error: listError } = await supabaseAdmin.storage.from(REFERENCE_BUCKET).list();
   if (listError || !files?.length) {
     if (listError) console.warn('[vision] reference photos list failed:', listError.message);
-    referenceImagesCache = [];
-    return referenceImagesCache;
+    referencePoolCache = [];
+    return referencePoolCache;
   }
 
   const images = [];
-  for (const file of files.slice(0, MAX_REFERENCE_IMAGES)) {
+  for (const file of files) {
     const { data, error } = await supabaseAdmin.storage.from(REFERENCE_BUCKET).download(file.name);
     if (error) {
       console.warn(`[vision] reference photo download failed (${file.name}):`, error.message);
@@ -45,8 +50,13 @@ async function fetchReferenceImages() {
     images.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: buffer.toString('base64') } });
   }
 
-  referenceImagesCache = images;
+  referencePoolCache = images;
   return images;
+}
+
+function sampleReferenceImages(pool, count) {
+  if (pool.length <= count) return pool;
+  return [...pool].sort(() => Math.random() - 0.5).slice(0, count);
 }
 
 // storagePath is a path within the `load-photos` Supabase Storage bucket
@@ -62,7 +72,8 @@ export async function checkLoadSecuredCompliance(storagePath) {
 
   const imageBuffer = Buffer.from(await file.arrayBuffer());
   const mediaType = SUPPORTED_MEDIA_TYPES.has(file.type) ? file.type : 'image/jpeg';
-  const referenceImages = await fetchReferenceImages();
+  const referencePool = await fetchReferencePool();
+  const referenceImages = sampleReferenceImages(referencePool, REFERENCE_SAMPLE_SIZE);
 
   const content = [];
   if (referenceImages.length > 0) {
