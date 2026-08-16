@@ -42,11 +42,20 @@ function toImageBlock(buffer) {
 // optional: if the bucket doesn't exist yet or is empty, the check still
 // runs on the text prompt alone, same as before this existed.
 //
-// The whole pool (Carlos uploaded 52) is downloaded and resized once,
-// in parallel, then cached (already-shrunk) for the life of this process.
-// A fresh random REFERENCE_SAMPLE_SIZE is drawn from the cached pool on
-// every check, so requests see varied examples without re-downloading or
-// re-resizing the whole pool each time.
+// The whole pool (Carlos uploaded 52) is downloaded and resized once, then
+// cached (already-shrunk) for the life of this process. A fresh random
+// REFERENCE_SAMPLE_SIZE is drawn from the cached pool on every check, so
+// requests see varied examples without re-downloading or re-resizing the
+// whole pool each time.
+//
+// Deliberately ONE AT A TIME, not Promise.all -- this is what actually
+// OOM-killed the Render instance (512MB limit). Resizing needs to decode
+// each full-resolution original into memory before it shrinks down;
+// downloading+decoding 52 phone photos concurrently meant dozens of
+// full-size raw buffers existing at once, well before any of them got
+// small. Sequential keeps peak memory bounded to roughly one photo's
+// decode overhead at a time, at the cost of this one-time (cached
+// afterward) pass taking longer.
 let referencePoolCache = null;
 
 async function fetchReferencePool() {
@@ -59,25 +68,23 @@ async function fetchReferencePool() {
     return referencePoolCache;
   }
 
-  const downloads = await Promise.all(
-    files.map(async (file) => {
-      const { data, error } = await supabaseAdmin.storage.from(REFERENCE_BUCKET).download(file.name);
-      if (error) {
-        console.warn(`[vision] reference photo download failed (${file.name}):`, error.message);
-        return null;
-      }
-      try {
-        const buffer = Buffer.from(await data.arrayBuffer());
-        return toImageBlock(await resizeForVision(buffer));
-      } catch (err) {
-        console.warn(`[vision] reference photo resize failed (${file.name}):`, err.message);
-        return null;
-      }
-    })
-  );
+  const images = [];
+  for (const file of files) {
+    const { data, error } = await supabaseAdmin.storage.from(REFERENCE_BUCKET).download(file.name);
+    if (error) {
+      console.warn(`[vision] reference photo download failed (${file.name}):`, error.message);
+      continue;
+    }
+    try {
+      const buffer = Buffer.from(await data.arrayBuffer());
+      images.push(toImageBlock(await resizeForVision(buffer)));
+    } catch (err) {
+      console.warn(`[vision] reference photo resize failed (${file.name}):`, err.message);
+    }
+  }
 
-  referencePoolCache = downloads.filter(Boolean);
-  return referencePoolCache;
+  referencePoolCache = images;
+  return images;
 }
 
 function sampleReferenceImages(pool, count) {
