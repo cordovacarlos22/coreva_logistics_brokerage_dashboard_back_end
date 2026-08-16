@@ -23,7 +23,13 @@ const FIELD_KEY_PATTERNS = {
   trailerNumber: /trailer|vehicle\s*id/,
   mfo: /m\.?\s?f\.?\s?o\.?/,
   poNumber: /p\.?\s?o\.?\s*(#|no|number)?/,
-  weightLbs: /weight|^wt/,
+  // A real IP BOL has THREE separate "weight" labels in its bottom
+  // summary (Subtotal/Pallet/Total Weight) -- confirmed live that a bare
+  // /weight/ pattern matches whichever one Textract happened to list
+  // first, not necessarily the right one (a scan came back with the
+  // pallet weight instead of the shipment's actual weight). Subtotal
+  // Weight is the one that means "weight of what's actually shipped".
+  weightLbs: /subtotal\s*weight/,
   commodity: /commodity/,
   // Preview-only -- pre-fills destination before a load exists (Scan New
   // Shipment). No shipFrom counterpart: on a real IP BOL the pickup
@@ -81,13 +87,23 @@ function buildKeyValueMap(blocks) {
   return map;
 }
 
-function parseBolFields(keyValueMap) {
+function parseBolFields(keyValueMap, rawText) {
   const fields = {};
   for (const [field, pattern] of Object.entries(FIELD_KEY_PATTERNS)) {
     const matchedKey = Object.keys(keyValueMap).find((key) => pattern.test(key));
     const value = matchedKey ? keyValueMap[matchedKey] : null;
     if (!value) continue;
     fields[field] = field === 'weightLbs' ? Number(value.replace(/[^\d.]/g, '')) : value;
+  }
+
+  // FORMS' region-based value for this key came back truncated on a live
+  // scan ("15272 /", missing the trailing "8") -- label and ID sit on the
+  // same physical line, so Textract's plain LINE read (rawText) tends to
+  // be more complete than the region it decided was "the value". Prefer
+  // it when found.
+  if (rawText) {
+    const planMatch = rawText.match(/shipment\s*plan\s*id\.?\s*(\d[\d\s/]*\d)/i);
+    if (planMatch) fields.shipmentPlanId = planMatch[1].replace(/\s+/g, ' ').trim();
   }
 
   // The "SHIP TO" box on a real IP BOL also contains a standing legal
@@ -100,6 +116,15 @@ function parseBolFields(keyValueMap) {
   // disclaimer's exact wording can vary/misread slightly).
   if (fields.shipTo) {
     fields.shipTo = fields.shipTo.replace(/\([^)]*\)?/g, ' ').replace(/\s+/g, ' ').trim();
+
+    // The value also leads with the customer's company name before the
+    // actual street address -- confirmed against a real scan (Carlos:
+    // "pick up the customer name before the actual delivery address that
+    // started with a number"). Keep from the first digit onward, since a
+    // street address reliably starts with a number and a company name
+    // essentially never does.
+    const addressMatch = fields.shipTo.match(/\d.*/s);
+    if (addressMatch) fields.shipTo = addressMatch[0].trim();
   }
 
   // Shipping Comments isn't a clean key: value pair like the rest -- sub-
@@ -146,11 +171,11 @@ export async function extractBolFields(storagePath) {
   // key/value read so a failing scan can be diagnosed from what it
   // actually saw, not from a guess about what it probably saw.
   console.warn(`[ocr] ${storagePath} keyValueMap:`, JSON.stringify(keyValueMap, null, 2));
-  const fields = parseBolFields(keyValueMap);
   const rawText = blocks
     .filter((block) => block.BlockType === 'LINE')
     .map((block) => block.Text)
     .join('\n');
+  const fields = parseBolFields(keyValueMap, rawText);
 
   const verificationStatus = computeVerificationStatus(fields);
 
